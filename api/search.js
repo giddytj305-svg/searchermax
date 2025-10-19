@@ -3,7 +3,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // 🦆 DuckDuckGo
 async function searchDuckDuckGo(query) {
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(
+    query
+  )}&format=json&no_redirect=1&no_html=1`;
   const res = await fetch(url);
   const data = await res.json();
 
@@ -16,7 +18,9 @@ async function searchDuckDuckGo(query) {
           title: item.Text.split(" - ")[0],
           snippet: item.Text,
           url: item.FirstURL || null,
-          image: item.Icon?.URL ? `https://duckduckgo.com${item.Icon.URL}` : null,
+          image: item.Icon?.URL
+            ? `https://duckduckgo.com${item.Icon.URL}`
+            : null,
           source: "DuckDuckGo",
         });
       }
@@ -39,7 +43,9 @@ async function searchDuckDuckGo(query) {
 // 🧵 Reddit
 async function searchReddit(query) {
   try {
-    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&t=month&limit=5`;
+    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(
+      query
+    )}&sort=top&t=month&limit=5`;
     const res = await fetch(url, {
       headers: { "User-Agent": "MaxCodeGenAI/1.0" },
     });
@@ -65,7 +71,9 @@ async function searchReddit(query) {
 // 🧠 Wikipedia
 async function searchWikipedia(query) {
   try {
-    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
+      query
+    )}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();
@@ -89,7 +97,9 @@ async function searchWikipedia(query) {
 async function searchNews(query) {
   try {
     const key = process.env.GNEWS_API_KEY || "demo";
-    const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(query)}&lang=en&max=5&apikey=${key}`;
+    const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(
+      query
+    )}&lang=en&max=5&apikey=${key}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();
@@ -118,8 +128,31 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { query } = await req.json?.() || req.body;
-    if (!query) return res.status(400).json({ error: "Missing query." });
+    // ✅ FIXED BODY PARSING (works for Node & Edge runtimes)
+    let query = "";
+    try {
+      if (req.body && typeof req.body === "object") {
+        query = req.body.query;
+      } else {
+        const bodyText = await new Promise((resolve, reject) => {
+          let data = "";
+          req.on("data", (chunk) => (data += chunk));
+          req.on("end", () => resolve(data));
+          req.on("error", reject);
+        });
+        const parsed = JSON.parse(bodyText || "{}");
+        query = parsed.query;
+      }
+    } catch (e) {
+      console.error("❌ Failed to parse request body:", e);
+    }
+
+    if (!query) {
+      console.warn("⚠️ Missing query field in request body");
+      return res.status(400).json({ error: "Missing query." });
+    }
+
+    console.log("🔍 Searching for:", query);
 
     // 🔍 Fetch data in parallel
     const [duck, reddit, wiki, news] = await Promise.all([
@@ -145,10 +178,13 @@ ${sources.map((s, i) => `${i + 1}. ${s.title} — ${s.snippet}`).join("\n")}
         reply = result.response.text();
       }
     } catch (e) {
-      console.warn("Gemini summarization skipped:", e.message);
+      console.warn("⚠️ Gemini summarization skipped:", e.message);
     }
 
-    const images = sources.filter((s) => s.image).map((s) => s.image).slice(0, 6);
+    const images = sources
+      .filter((s) => s.image)
+      .map((s) => s.image)
+      .slice(0, 6);
 
     res.status(200).json({
       reply,
