@@ -85,6 +85,42 @@ function detectLanguage(text) {
   return "swahili";
 }
 
+// 🧩 Detect if prompt needs online search
+function needsSearch(prompt) {
+  const triggers = [
+    "search",
+    "find",
+    "look up",
+    "check online",
+    "what’s trending",
+    "any news",
+    "on twitter",
+    "on reddit",
+  ];
+  return triggers.some((t) => prompt.toLowerCase().includes(t));
+}
+
+// 🌍 Fetch real-time search results
+async function fetchSearchResults(prompt) {
+  try {
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:3000";
+
+    const res = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: prompt }),
+    });
+
+    const data = await res.json();
+    return data?.sources || [];
+  } catch (err) {
+    console.error("❌ Search fetch failed:", err);
+    return [];
+  }
+}
+
 // 🚀 API Handler
 export default async function handler(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -118,11 +154,21 @@ export default async function handler(req, res) {
       languageInstruction = "Respond in English, friendly Kenyan developer tone.";
     }
 
-    // 🧩 Conversation context
+    // 🌐 Check if online search is needed
+    let searchContext = "";
+    if (needsSearch(prompt)) {
+      const sources = await fetchSearchResults(prompt);
+      if (sources.length > 0) {
+        searchContext = "\n\nHere are some real-time search results:\n" + JSON.stringify(sources, null, 2);
+      }
+    }
+
+    // 🧩 Build prompt text
     const promptText = `
 ${memory.conversation
   .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.content}`)
   .join("\n")}
+${searchContext}
 
 System instruction: ${languageInstruction}
 `;
