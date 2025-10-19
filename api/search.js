@@ -167,7 +167,11 @@ ${sources.map((s, i) => `${i + 1}. ${s.title} — ${s.snippet}`).join("\n")}
       summary: `Fetched ${sources.length} results for "${query}".`,
     });
   } catch (err) {
-    console.error("❌ Search API error:", err);
-    res.status(500).json({ error: err.message || "Search failed" });
-  }
+  console.error("❌ Search API error:", err);
+  res.status(200).json({
+    reply: "⚠️ I couldn’t reach live sources right now, but here’s a quick response.",
+    sources: [],
+    images: [],
+    summary: "Search temporarily unavailable.",
+  });
 }
