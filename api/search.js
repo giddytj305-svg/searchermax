@@ -1,4 +1,4 @@
-import fetch from "node-fetch";
+// ✅ /api/search.js — Real-time search with Gemini summary + image support
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // 🦆 DuckDuckGo
@@ -6,10 +6,11 @@ async function searchDuckDuckGo(query) {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
   const res = await fetch(url);
   const data = await res.json();
+
   const results = [];
 
   if (data.RelatedTopics) {
-    data.RelatedTopics.forEach(item => {
+    for (const item of data.RelatedTopics) {
       if (item.Text) {
         results.push({
           title: item.Text.split(" - ")[0],
@@ -19,7 +20,7 @@ async function searchDuckDuckGo(query) {
           source: "DuckDuckGo",
         });
       }
-    });
+    }
   }
 
   if (data.AbstractText) {
@@ -37,56 +38,71 @@ async function searchDuckDuckGo(query) {
 
 // 🧵 Reddit
 async function searchReddit(query) {
-  const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&t=month&limit=5`;
-  const res = await fetch(url, { headers: { "User-Agent": "MaxCodeGenAI/1.0" } });
-  const data = await res.json();
+  try {
+    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=top&t=month&limit=5`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "MaxCodeGenAI/1.0" },
+    });
+    const data = await res.json();
+    const posts = data.data?.children || [];
 
-  const posts = data.data?.children || [];
-  return posts.map(p => {
-    const post = p.data;
-    return {
-      title: post.title,
-      snippet: post.selftext?.slice(0, 200) || post.url || "",
-      url: `https://reddit.com${post.permalink}`,
-      image: post.thumbnail?.startsWith("http") ? post.thumbnail : null,
-      source: "Reddit",
-    };
-  });
+    return posts.map((p) => {
+      const post = p.data;
+      return {
+        title: post.title,
+        snippet: post.selftext?.slice(0, 200) || post.url || "",
+        url: `https://reddit.com${post.permalink}`,
+        image: post.thumbnail?.startsWith("http") ? post.thumbnail : null,
+        source: "Reddit",
+      };
+    });
+  } catch (e) {
+    console.error("Reddit fetch failed:", e);
+    return [];
+  }
 }
 
 // 🧠 Wikipedia
 async function searchWikipedia(query) {
-  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await res.json();
+  try {
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
 
-  return [{
-    title: data.title,
-    snippet: data.extract,
-    url: data.content_urls?.desktop?.page || null,
-    image: data.thumbnail?.source || null,
-    source: "Wikipedia",
-  }];
+    return [
+      {
+        title: data.title,
+        snippet: data.extract || "",
+        url: data.content_urls?.desktop?.page || null,
+        image: data.thumbnail?.source || null,
+        source: "Wikipedia",
+      },
+    ];
+  } catch (e) {
+    console.error("Wikipedia fetch failed:", e);
+    return [];
+  }
 }
 
 // 📰 GNews
 async function searchNews(query) {
   try {
-    const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(query)}&lang=en&max=5&apikey=${process.env.GNEWS_API_KEY || "demo"}`;
+    const key = process.env.GNEWS_API_KEY || "demo";
+    const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(query)}&lang=en&max=5&apikey=${key}`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();
 
-    return (data.articles || []).map(a => ({
-      title: a.title,
+    return (data.articles || []).map((a) => ({
+      title: a.title || "Untitled",
       snippet: a.description || "",
       url: a.url,
       image: a.image || null,
       source: a.source?.name || "News",
     }));
-  } catch (err) {
-    console.error("News fetch failed:", err);
+  } catch (e) {
+    console.error("News fetch failed:", e);
     return [];
   }
 }
@@ -96,11 +112,13 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "POST")
+    return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { query } = req.body;
+    const { query } = await req.json?.() || req.body;
     if (!query) return res.status(400).json({ error: "Missing query." });
 
     // 🔍 Fetch data in parallel
@@ -114,23 +132,30 @@ export default async function handler(req, res) {
     const sources = [...wiki, ...news, ...reddit, ...duck].slice(0, 10);
 
     // 🧠 Gemini summary
-    let reply = "Here’s what I found:";
+    let reply = "Here’s what I found online 👇";
     try {
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const prompt = `
-Summarize the key points about "${query}" using the following data:
+      if (process.env.GEMINI_API_KEY) {
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const prompt = `
+Summarize the key takeaways about "${query}" based on this data:
 ${sources.map((s, i) => `${i + 1}. ${s.title} — ${s.snippet}`).join("\n")}
 `;
-      const result = await model.generateContent(prompt);
-      reply = result.response.text();
+        const result = await model.generateContent(prompt);
+        reply = result.response.text();
+      }
     } catch (e) {
       console.warn("Gemini summarization skipped:", e.message);
     }
 
-    const images = sources.filter(s => s.image).map(s => s.image).slice(0, 6);
+    const images = sources.filter((s) => s.image).map((s) => s.image).slice(0, 6);
 
-    res.status(200).json({ reply, sources, images });
+    res.status(200).json({
+      reply,
+      sources,
+      images,
+      summary: `Fetched ${sources.length} results for "${query}".`,
+    });
   } catch (err) {
     console.error("❌ Search API error:", err);
     res.status(500).json({ error: "Failed to fetch or summarize results." });
